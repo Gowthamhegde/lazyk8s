@@ -46,6 +46,13 @@ else
   mv "$TMP" "$INSTALL_DIR/lazyk8s"
 fi
 
+# ── detect WSL ────────────────────────────────────────────────────────────────
+IS_WSL=0
+if grep -qiE "microsoft|wsl" /proc/version 2>/dev/null; then
+  IS_WSL=1
+  echo "🪟  WSL detected"
+fi
+
 # ── configure PATH on all shells ──────────────────────────────────────────────
 configure_path() {
   local rc="$1"
@@ -59,6 +66,15 @@ if [ "$INSTALL_DIR" = "$HOME/.local/bin" ]; then
   configure_path "$HOME/.bash_profile"
   configure_path "$HOME/.zshrc"
   configure_path "$HOME/.profile"
+
+  # WSL: also patch /etc/wsl.conf to preserve PATH across sessions
+  if [ "$IS_WSL" = "1" ]; then
+    configure_path "$HOME/.bash_profile"
+    # ensure Windows PATH interop doesn't shadow our bin
+    if ! grep -q "appendWindowsPath" /etc/wsl.conf 2>/dev/null; then
+      echo -e "\n[interop]\nappendWindowsPath = true" | sudo tee -a /etc/wsl.conf > /dev/null 2>&1 || true
+    fi
+  fi
 
   # fish shell
   FISH_CFG="$HOME/.config/fish/config.fish"
