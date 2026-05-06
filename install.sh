@@ -31,13 +31,19 @@ curl -fsSL "$REPO/lazyk8s" -o "$SCRIPT"
 chmod +x "$SCRIPT"
 
 # ── PATH ──────────────────────────────────────────────────────────────────────
+SHELL_RC="$HOME/.bashrc"
+[[ "$SHELL" == */zsh  ]] && SHELL_RC="$HOME/.zshrc"
+[[ "$SHELL" == */fish ]] && SHELL_RC="$HOME/.config/fish/config.fish"
+
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-  SHELL_RC="$HOME/.bashrc"
-  [[ "$SHELL" == */zsh  ]] && SHELL_RC="$HOME/.zshrc"
-  [[ "$SHELL" == */fish ]] && SHELL_RC="$HOME/.config/fish/config.fish"
   echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$SHELL_RC"
-  echo "   ➜  Added to PATH in $SHELL_RC — run: source $SHELL_RC"
 fi
+
+# reload PATH in current session so lazyk8s works immediately
+export PATH="$INSTALL_DIR:$PATH"
 
 echo ""
 echo "✅  Done! Run: lazyk8s"
+echo ""
+echo "   If you get 'command not found', run:"
+echo "      source $SHELL_RC"
