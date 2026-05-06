@@ -21,6 +21,15 @@ Then run:
 lazyk8s
 ```
 
+> **Note:** lazyk8s is a viewer — it requires a running Kubernetes cluster.
+> Start one before launching:
+> ```bash
+> minikube start        # local minikube cluster
+> # or
+> kind create cluster   # local kind cluster
+> ```
+> For cloud clusters (EKS, GKE, AKS), just ensure `kubectl` is configured and pointing at your cluster.
+
 ## Screenshots
 
 **📦 Pods** — status, restarts, age, node at a glance
