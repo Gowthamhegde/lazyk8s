@@ -6,21 +6,32 @@ A stylish, interactive Kubernetes TUI — see everything in your cluster without
 
 ## Install
 
+### Linux / macOS
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Gowthamhegde/lazyk8s/main/install.sh | bash
 ```
 
-Then run:
+### Windows (Command Prompt — run as Administrator)
+```bat
+curl -fsSL https://raw.githubusercontent.com/Gowthamhegde/lazyk8s/main/install.bat -o install.bat && install.bat
+```
 
+> Windows users: requires [Python](https://python.org/downloads) and [kubectl](https://kubernetes.io/docs/tasks/tools/). WSL also works — use the Linux install command inside WSL.
+
+Then run:
 ```bash
 lazyk8s
 ```
 
 ## Requirements
 
-- `python3`
-- `kubectl` (configured and pointing at a cluster)
-- Works with **minikube**, **kind**, **EKS**, **GKE**, **AKS** — any kubectl context
+| Requirement | Linux/macOS | Windows |
+|---|---|---|
+| Python 3 | `sudo apt install python3` | [python.org](https://python.org/downloads) |
+| kubectl | [Install guide](https://kubernetes.io/docs/tasks/tools/) | [Install guide](https://kubernetes.io/docs/tasks/tools/) |
+| textual | auto-installed | auto-installed |
+
+Works with **minikube**, **kind**, **EKS**, **GKE**, **AKS** — any kubectl context.
 
 ## Features
 
@@ -49,6 +60,13 @@ lazyk8s
 
 ## Uninstall
 
+**Linux/macOS**
 ```bash
 rm ~/.local/bin/lazyk8s
+```
+
+**Windows**
+```bat
+del %USERPROFILE%\.local\bin\lazyk8s.py
+del %USERPROFILE%\.local\bin\lazyk8s.bat
 ```
