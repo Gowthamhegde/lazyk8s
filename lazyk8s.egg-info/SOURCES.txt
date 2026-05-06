@@ -1,0 +1,8 @@
+lazykube.py
+setup.py
+lazyk8s.egg-info/PKG-INFO
+lazyk8s.egg-info/SOURCES.txt
+lazyk8s.egg-info/dependency_links.txt
+lazyk8s.egg-info/entry_points.txt
+lazyk8s.egg-info/requires.txt
+lazyk8s.egg-info/top_level.txt
