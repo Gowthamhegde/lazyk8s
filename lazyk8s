@@ -472,5 +472,34 @@ class LazyK8s(App):
         self.screen.focus()
 
 
+def check_cluster() -> tuple[bool, str]:
+    """Returns (reachable, hint_message)"""
+    ok, _ = kubectl("cluster-info")
+    if ok:
+        return True, ""
+
+    # detect what's available to suggest
+    has_minikube = subprocess.run("which minikube", shell=True, capture_output=True).returncode == 0
+    has_kind     = subprocess.run("which kind",     shell=True, capture_output=True).returncode == 0
+
+    lines = ["[bold red]⚠  No Kubernetes cluster is reachable.[/bold red]\n"]
+    lines.append("[dim]Start a cluster first, then re-run [bold]lazyk8s[/bold]:[/dim]\n")
+    if has_minikube:
+        lines.append("  [bold cyan]minikube start[/bold cyan]       — start a local minikube cluster")
+    if has_kind:
+        lines.append("  [bold cyan]kind create cluster[/bold cyan]  — start a local kind cluster")
+    if not has_minikube and not has_kind:
+        lines.append("  [bold cyan]minikube start[/bold cyan]       — install minikube: https://minikube.sigs.k8s.io")
+        lines.append("  [bold cyan]kind create cluster[/bold cyan]  — install kind: https://kind.sigs.k8s.io")
+    lines.append("\n[dim]Or point kubectl at an existing cluster (EKS, GKE, AKS) and retry.[/dim]")
+    return False, "\n".join(lines)
+
+
 if __name__ == "__main__":
+    reachable, hint = check_cluster()
+    if not reachable:
+        from rich.console import Console
+        from rich.panel import Panel
+        Console().print(Panel(hint, title="[bold]⎈  lazyk8s[/bold]", border_style="red", padding=(1, 4)))
+        sys.exit(1)
     LazyK8s().run()
