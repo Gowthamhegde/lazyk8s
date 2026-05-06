@@ -1,0 +1,14 @@
+.BurpSuite/
+.antigravity/
+.bash_history
+.bash_logout
+.bashrc
+.profile
+.local/
+.config/
+.kube/
+.minikube/
+.cache/
+.ssh/
+*.pyc
+__pycache__/

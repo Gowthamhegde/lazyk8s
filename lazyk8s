@@ -1,0 +1,476 @@
+#!/usr/bin/env python3
+"""lazyk8s — A stylish interactive Kubernetes TUI"""
+import subprocess, sys
+from textual.app import App, ComposeResult
+from textual.widgets import (
+    Header, Footer, DataTable, TabbedContent, TabPane,
+    Input, Label, RichLog, Static
+)
+from textual.containers import Horizontal, Vertical, ScrollableContainer
+from textual.binding import Binding
+from textual.screen import ModalScreen
+from textual import work
+from rich.text import Text
+from rich.panel import Panel
+
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def kubectl(args: str, ns: str = "") -> tuple[bool, str]:
+    ns_flag = f"-n {ns}" if ns and ns != "all" else ("-A" if ns == "all" else "")
+    cmd = f"kubectl {args} {ns_flag}".strip()
+    r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
+    out = r.stdout.strip()
+    err = "\n".join(l for l in r.stderr.splitlines() if "memcache.go" not in l)
+    return r.returncode == 0, out if r.returncode == 0 else err
+
+def status_style(val: str) -> Text:
+    v = val.strip()
+    if v in ("Running", "Ready", "True", "active", "Bound", "Completed"):
+        return Text(f"● {v}", style="bold green")
+    if any(x in v for x in ("Error", "CrashLoop", "OOMKilled", "Failed", "NotReady")):
+        return Text(f"✖ {v}", style="bold red")
+    if v in ("Pending", "ContainerCreating", "Terminating", "Unknown"):
+        return Text(f"◌ {v}", style="bold yellow")
+    return Text(v)
+
+def age_style(age: str) -> Text:
+    if any(age.endswith(u) for u in ("s", "m")) and len(age) <= 4:
+        return Text(age, style="bold yellow")   # very fresh
+    return Text(age, style="dim")
+
+def parse_kubectl_table(output: str) -> tuple[list[str], list[list[str]]]:
+    lines = [l for l in output.splitlines() if l.strip()]
+    if not lines:
+        return [], []
+    headers = lines[0].split()
+    rows = []
+    for line in lines[1:]:
+        cols = line.split(None, len(headers) - 1)
+        cols += [""] * (len(headers) - len(cols))
+        rows.append(cols)
+    return headers, rows
+
+def get_contexts() -> list[str]:
+    ok, out = kubectl("config get-contexts -o name")
+    return out.splitlines() if ok else []
+
+def get_namespaces() -> list[str]:
+    ok, out = kubectl("get namespaces -o jsonpath='{.items[*].metadata.name}'")
+    return ["all"] + out.strip("'").split() if ok else ["all"]
+
+
+# ── modal screens ─────────────────────────────────────────────────────────────
+
+class LogScreen(ModalScreen):
+    BINDINGS = [Binding("escape,q", "dismiss", "Close")]
+
+    def __init__(self, title: str, content: str):
+        super().__init__()
+        self._title = title
+        self._content = content
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal-container"):
+            yield Label(f"[bold cyan]{self._title}[/bold cyan]  [dim](ESC to close)[/dim]", id="modal-title")
+            log = RichLog(highlight=True, markup=True, wrap=True, id="modal-log")
+            yield log
+
+    def on_mount(self):
+        log = self.query_one("#modal-log", RichLog)
+        log.write(self._content or "[dim]No output[/dim]")
+
+
+class ContextScreen(ModalScreen):
+    BINDINGS = [Binding("escape,q", "dismiss", "Close")]
+
+    def __init__(self, contexts: list[str], current: str):
+        super().__init__()
+        self._contexts = contexts
+        self._current = current
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal-container"):
+            yield Label("[bold magenta]Switch Context[/bold magenta]  [dim](Enter to select, ESC to close)[/dim]", id="modal-title")
+            table = DataTable(id="ctx-table", cursor_type="row")
+            yield table
+
+    def on_mount(self):
+        table = self.query_one("#ctx-table", DataTable)
+        table.add_columns("", "Context")
+        for ctx in self._contexts:
+            mark = "★" if ctx == self._current else " "
+            style = "bold yellow" if ctx == self._current else ""
+            table.add_row(Text(mark, style="bold yellow"), Text(ctx, style=style))
+        table.focus()
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected):
+        ctx = self._contexts[event.cursor_row]
+        subprocess.run(f"kubectl config use-context {ctx}", shell=True, capture_output=True)
+        self.dismiss(ctx)
+
+
+# ── summary bar ───────────────────────────────────────────────────────────────
+
+class SummaryBar(Static):
+    def update_stats(self, ctx, ns, nodes_ready, nodes_total, pods_running, pods_total):
+        nc = "green" if nodes_ready == nodes_total and nodes_total > 0 else "red"
+        pc = "green" if pods_running == pods_total and pods_total > 0 else "yellow"
+        self.update(
+            f"[bold white]⎈  lazyk8s[/bold white]"
+            f"  [dim]│[/dim]  [dim]context:[/dim] [bold yellow]{ctx}[/bold yellow]"
+            f"  [dim]│[/dim]  [dim]namespace:[/dim] [bold cyan]{ns}[/bold cyan]"
+            f"  [dim]│[/dim]  [dim]nodes:[/dim] [bold {nc}]{nodes_ready}/{nodes_total} ready[/bold {nc}]"
+            f"  [dim]│[/dim]  [dim]pods:[/dim] [bold {pc}]{pods_running}/{pods_total} running[/bold {pc}]"
+        )
+
+
+# ── main app ──────────────────────────────────────────────────────────────────
+
+class LazyK8s(App):
+    CSS = """
+    Screen { background: #0d1117; }
+
+    SummaryBar {
+        background: #161b22;
+        color: white;
+        padding: 0 2;
+        height: 1;
+        dock: top;
+        margin-top: 1;
+    }
+
+    #search-bar {
+        height: 1;
+        dock: top;
+        margin-top: 2;
+        display: none;
+    }
+    #search-bar.visible { display: block; }
+    #search-input {
+        border: none;
+        background: #21262d;
+        color: white;
+        width: 40;
+    }
+
+    TabbedContent { margin-top: 3; }
+    TabPane { padding: 0 1; }
+
+    DataTable {
+        background: #0d1117;
+        color: #c9d1d9;
+        height: 1fr;
+    }
+    DataTable > .datatable--header {
+        background: #161b22;
+        color: #58a6ff;
+        text-style: bold;
+    }
+    DataTable > .datatable--cursor {
+        background: #1f6feb;
+        color: white;
+    }
+    DataTable > .datatable--even-row { background: #0d1117; }
+    DataTable > .datatable--odd-row  { background: #161b22; }
+
+    #modal-container {
+        background: #161b22;
+        border: round #58a6ff;
+        padding: 1 2;
+        width: 90%;
+        height: 80%;
+        margin: 2 4;
+    }
+    #modal-title { color: white; padding-bottom: 1; }
+    #modal-log   { height: 1fr; background: #0d1117; border: round #30363d; }
+
+    #ctx-table { height: 1fr; }
+
+    Footer { background: #161b22; color: #8b949e; }
+    Header { background: #161b22; color: #58a6ff; }
+    """
+
+    BINDINGS = [
+        Binding("r",     "refresh",          "Refresh"),
+        Binding("l",     "show_logs",        "Logs"),
+        Binding("d",     "show_describe",    "Describe"),
+        Binding("c",     "switch_context",   "Context"),
+        Binding("n",     "cycle_namespace",  "Namespace"),
+        Binding("e",     "show_events",      "Events"),
+        Binding("t",     "show_top",         "Top"),
+        Binding("/",     "toggle_search",    "Search"),
+        Binding("escape","clear_search",     "Clear", show=False),
+        Binding("q",     "quit",             "Quit"),
+    ]
+
+    def __init__(self):
+        super().__init__()
+        self._ns = "all"
+        self._search = ""
+        self._namespaces = ["all"]
+        self._contexts = []
+        self._current_ctx = ""
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        yield SummaryBar(id="summary")
+        with Horizontal(id="search-bar"):
+            yield Label("[bold yellow]🔍 Filter:[/bold yellow] ", id="search-label")
+            yield Input(placeholder="type to filter...", id="search-input")
+        with TabbedContent(id="tabs"):
+            with TabPane("📦 Pods",        id="tab-pods"):
+                yield DataTable(id="tbl-pods",        cursor_type="row", zebra_stripes=True)
+            with TabPane("🖥  Nodes",       id="tab-nodes"):
+                yield DataTable(id="tbl-nodes",       cursor_type="row", zebra_stripes=True)
+            with TabPane("🚀 Deployments", id="tab-deployments"):
+                yield DataTable(id="tbl-deployments", cursor_type="row", zebra_stripes=True)
+            with TabPane("🌐 Services",    id="tab-services"):
+                yield DataTable(id="tbl-services",    cursor_type="row", zebra_stripes=True)
+            with TabPane("🔗 Contexts",    id="tab-contexts"):
+                yield DataTable(id="tbl-contexts",    cursor_type="row", zebra_stripes=True)
+            with TabPane("⚡ Events",      id="tab-events"):
+                yield DataTable(id="tbl-events",      cursor_type="row", zebra_stripes=True)
+        yield Footer()
+
+    def on_mount(self):
+        self._namespaces = get_namespaces()
+        self._contexts   = get_contexts()
+        ok, ctx = kubectl("config current-context")
+        self._current_ctx = ctx if ok else "unknown"
+        self.refresh_all()
+        self.set_interval(5, self.refresh_all)
+
+    # ── data loading ──────────────────────────────────────────────────────────
+
+    @work(thread=True)
+    def refresh_all(self):
+        self._load_pods()
+        self._load_nodes()
+        self._load_deployments()
+        self._load_services()
+        self._load_contexts()
+        self._load_events()
+        self._update_summary()
+
+    def _fill_table(self, table_id: str, headers: list, rows: list, style_map: dict = {}):
+        def do():
+            tbl = self.query_one(f"#{table_id}", DataTable)
+            tbl.clear(columns=True)
+            for h in headers:
+                tbl.add_column(h, key=h)
+            q = self._search.lower()
+            for row in rows:
+                if q and not any(q in str(c).lower() for c in row):
+                    continue
+                styled = []
+                for i, cell in enumerate(row):
+                    fn = style_map.get(i)
+                    styled.append(fn(str(cell)) if fn else str(cell))
+                tbl.add_row(*styled)
+        self.call_from_thread(do)
+
+    def _load_pods(self):
+        ok, out = kubectl("get pods -o wide", self._ns)
+        if not ok:
+            self._fill_table("tbl-pods", ["Info"], [[out or "Cluster not reachable"]])
+            return
+        hdrs, rows = parse_kubectl_table(out)
+        # keep: NAMESPACE(0) NAME(1) READY(2) STATUS(3) RESTARTS(4) AGE(5) NODE(7)
+        keep = [0,1,2,3,4,5,7] if len(hdrs) > 7 else list(range(len(hdrs)))
+        fhdrs = [hdrs[i] for i in keep if i < len(hdrs)]
+        frows = [[r[i] for i in keep if i < len(r)] for r in rows]
+        si = fhdrs.index("STATUS") if "STATUS" in fhdrs else -1
+        ai = fhdrs.index("AGE")    if "AGE"    in fhdrs else -1
+        sm = {}
+        if si >= 0: sm[si] = status_style
+        if ai >= 0: sm[ai] = age_style
+        self._fill_table("tbl-pods", fhdrs, frows, sm)
+
+    def _load_nodes(self):
+        ok, out = kubectl("get nodes -o wide")
+        if not ok:
+            self._fill_table("tbl-nodes", ["Info"], [[out or "Cluster not reachable"]])
+            return
+        hdrs, rows = parse_kubectl_table(out)
+        keep = [0,1,2,3,4,5] if len(hdrs) > 5 else list(range(len(hdrs)))
+        fhdrs = [hdrs[i] for i in keep if i < len(hdrs)]
+        frows = [[r[i] for i in keep if i < len(r)] for r in rows]
+        si = fhdrs.index("STATUS") if "STATUS" in fhdrs else -1
+        sm = {si: status_style} if si >= 0 else {}
+        self._fill_table("tbl-nodes", fhdrs, frows, sm)
+
+    def _load_deployments(self):
+        ok, out = kubectl("get deployments", self._ns)
+        if not ok:
+            self._fill_table("tbl-deployments", ["Info"], [[out or "Cluster not reachable"]])
+            return
+        hdrs, rows = parse_kubectl_table(out)
+        def ready_style(v):
+            parts = v.split("/")
+            if len(parts) == 2 and parts[0] == parts[1]:
+                return Text(f"● {v}", style="bold green")
+            return Text(f"◌ {v}", style="bold yellow")
+        ri = hdrs.index("READY") if "READY" in hdrs else -1
+        sm = {ri: ready_style} if ri >= 0 else {}
+        self._fill_table("tbl-deployments", hdrs, rows, sm)
+
+    def _load_services(self):
+        ok, out = kubectl("get services", self._ns)
+        if not ok:
+            self._fill_table("tbl-services", ["Info"], [[out or "Cluster not reachable"]])
+            return
+        hdrs, rows = parse_kubectl_table(out)
+        def type_style(v):
+            colors = {"LoadBalancer": "bold cyan", "NodePort": "bold yellow",
+                      "ClusterIP": "dim white", "ExternalName": "bold magenta"}
+            return Text(v, style=colors.get(v, "white"))
+        ti = hdrs.index("TYPE") if "TYPE" in hdrs else -1
+        sm = {ti: type_style} if ti >= 0 else {}
+        self._fill_table("tbl-services", hdrs, rows, sm)
+
+    def _load_contexts(self):
+        ok, out = kubectl("config get-contexts")
+        if not ok:
+            self._fill_table("tbl-contexts", ["Info"], [[out]])
+            return
+        hdrs, rows = parse_kubectl_table(out)
+        styled_rows = []
+        for row in rows:
+            if row and row[0] == "*":
+                styled_rows.append([Text(c, style="bold yellow") for c in row])
+            else:
+                styled_rows.append(row)
+        self._fill_table("tbl-contexts", hdrs, styled_rows)
+
+    def _load_events(self):
+        ok, out = kubectl("get events --sort-by=.lastTimestamp", self._ns)
+        if not ok:
+            self._fill_table("tbl-events", ["Info"], [[out or "Cluster not reachable"]])
+            return
+        hdrs, rows = parse_kubectl_table(out)
+        def reason_style(v):
+            if v in ("BackOff", "Failed", "Killing", "Unhealthy"):
+                return Text(v, style="bold red")
+            if v in ("Pulled", "Created", "Started", "Scheduled"):
+                return Text(v, style="bold green")
+            return Text(v, style="yellow")
+        ri = hdrs.index("REASON") if "REASON" in hdrs else -1
+        sm = {ri: reason_style} if ri >= 0 else {}
+        self._fill_table("tbl-events", hdrs, rows, sm)
+
+    def _update_summary(self):
+        ok, out = kubectl("get nodes --no-headers")
+        lines = out.splitlines() if ok else []
+        total_n = len(lines)
+        ready_n = sum(1 for l in lines if "Ready" in l and "NotReady" not in l)
+
+        ok2, out2 = kubectl("get pods -A --no-headers")
+        plines = out2.splitlines() if ok2 else []
+        total_p   = len(plines)
+        running_p = sum(1 for l in plines if "Running" in l)
+
+        ok3, ctx = kubectl("config current-context")
+        self._current_ctx = ctx if ok3 else self._current_ctx
+
+        def do():
+            self.query_one("#summary", SummaryBar).update_stats(
+                self._current_ctx, self._ns, ready_n, total_n, running_p, total_p)
+        self.call_from_thread(do)
+
+    # ── actions ───────────────────────────────────────────────────────────────
+
+    def action_refresh(self):
+        self.notify("Refreshing...", severity="information", timeout=1)
+        self.refresh_all()
+
+    def _active_row(self) -> list[str] | None:
+        tabs = self.query_one("#tabs", TabbedContent)
+        active = tabs.active
+        tbl_id = active.replace("tab-", "tbl-")
+        try:
+            tbl = self.query_one(f"#{tbl_id}", DataTable)
+            row_key = tbl.cursor_row
+            return [str(tbl.get_cell_at((row_key, c))) for c in range(len(tbl.columns))]
+        except Exception:
+            return None
+
+    def _pod_name_ns(self) -> tuple[str, str]:
+        row = self._active_row()
+        if not row: return "", ""
+        # row: NAMESPACE NAME READY STATUS ...
+        return (row[1], row[0]) if len(row) > 1 else (row[0], "")
+
+    def action_show_logs(self):
+        name, ns = self._pod_name_ns()
+        if not name:
+            self.notify("Select a pod first", severity="warning"); return
+        ok, out = kubectl(f"logs {name} --tail=200", ns)
+        self.push_screen(LogScreen(f"Logs: {name}", out))
+
+    def action_show_describe(self):
+        tabs = self.query_one("#tabs", TabbedContent)
+        active = tabs.active
+        row = self._active_row()
+        if not row:
+            self.notify("Select a row first", severity="warning"); return
+        resource_map = {
+            "tab-pods": "pod", "tab-nodes": "node",
+            "tab-deployments": "deployment", "tab-services": "service",
+        }
+        kind = resource_map.get(active, "pod")
+        name = row[1] if len(row) > 1 else row[0]
+        ns   = row[0] if active != "tab-nodes" else ""
+        ok, out = kubectl(f"describe {kind} {name}", ns)
+        self.push_screen(LogScreen(f"Describe {kind}: {name}", out))
+
+    def action_switch_context(self):
+        self.push_screen(
+            ContextScreen(self._contexts, self._current_ctx),
+            callback=lambda ctx: (setattr(self, "_current_ctx", ctx or self._current_ctx),
+                                  self.refresh_all()) if ctx else None
+        )
+
+    def action_cycle_namespace(self):
+        idx = self._namespaces.index(self._ns) if self._ns in self._namespaces else 0
+        self._ns = self._namespaces[(idx + 1) % len(self._namespaces)]
+        self.notify(f"Namespace: {self._ns}", timeout=1)
+        self.refresh_all()
+
+    def action_show_events(self):
+        tabs = self.query_one("#tabs", TabbedContent)
+        tabs.active = "tab-events"
+
+    def action_show_top(self):
+        ok, out = kubectl("top pods -A --no-headers 2>/dev/null || echo 'metrics-server not available'")
+        self.push_screen(LogScreen("Resource Usage (kubectl top)", out))
+
+    def action_toggle_search(self):
+        bar = self.query_one("#search-bar")
+        inp = self.query_one("#search-input", Input)
+        if "visible" in bar.classes:
+            bar.remove_class("visible")
+            self._search = ""
+            self.refresh_all()
+        else:
+            bar.add_class("visible")
+            inp.focus()
+
+    def action_clear_search(self):
+        bar = self.query_one("#search-bar")
+        if "visible" in bar.classes:
+            bar.remove_class("visible")
+            self._search = ""
+            self.refresh_all()
+
+    def on_input_changed(self, event: Input.Changed):
+        self._search = event.value
+        self.refresh_all()
+
+    def on_input_submitted(self, event: Input.Submitted):
+        self.query_one("#search-bar").remove_class("visible")
+        self.screen.focus()
+
+
+if __name__ == "__main__":
+    LazyK8s().run()
