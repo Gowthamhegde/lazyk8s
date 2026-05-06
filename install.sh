@@ -2,7 +2,19 @@
 set -e
 
 REPO="https://raw.githubusercontent.com/Gowthamhegde/lazyk8s/main"
-INSTALL_DIR="$HOME/.local/bin"
+# Use /usr/local/bin if writable (always in PATH), else fall back to ~/.local/bin
+if [ -w /usr/local/bin ]; then
+  INSTALL_DIR="/usr/local/bin"
+else
+  INSTALL_DIR="$HOME/.local/bin"
+  mkdir -p "$INSTALL_DIR"
+  # Permanently add to PATH in shell rc
+  SHELL_RC="$HOME/.bashrc"
+  [[ "$SHELL" == */zsh  ]] && SHELL_RC="$HOME/.zshrc"
+  [[ "$SHELL" == */fish ]] && SHELL_RC="$HOME/.config/fish/config.fish"
+  grep -qxF "export PATH=\"\$HOME/.local/bin:\$PATH\"" "$SHELL_RC" 2>/dev/null \
+    || echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$SHELL_RC"
+fi
 SCRIPT="$INSTALL_DIR/lazyk8s"
 
 echo "⎈  Installing lazyk8s..."
@@ -26,24 +38,8 @@ pip3 install textual --quiet --break-system-packages 2>/dev/null \
   || pip3 install textual --quiet
 
 # ── install script ────────────────────────────────────────────────────────────
-mkdir -p "$INSTALL_DIR"
 curl -fsSL "$REPO/lazyk8s" -o "$SCRIPT"
 chmod +x "$SCRIPT"
 
-# ── PATH ──────────────────────────────────────────────────────────────────────
-SHELL_RC="$HOME/.bashrc"
-[[ "$SHELL" == */zsh  ]] && SHELL_RC="$HOME/.zshrc"
-[[ "$SHELL" == */fish ]] && SHELL_RC="$HOME/.config/fish/config.fish"
-
-if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-  echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$SHELL_RC"
-fi
-
-# reload PATH in current session so lazyk8s works immediately
-export PATH="$INSTALL_DIR:$PATH"
-
 echo ""
 echo "✅  Done! Run: lazyk8s"
-echo ""
-echo "   If you get 'command not found', run:"
-echo "      source $SHELL_RC"
