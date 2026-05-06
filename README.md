@@ -2,8 +2,6 @@
 
 A stylish, interactive Kubernetes TUI — see everything in your cluster without running individual `kubectl` commands.
 
-![lazyk8s demo](https://raw.githubusercontent.com/Gowthamhegde/lazyk8s/main/demo.png)
-
 ## Install
 
 ### Linux / macOS
@@ -22,6 +20,23 @@ Then run:
 ```bash
 lazyk8s
 ```
+
+## Screenshots
+
+**📦 Pods** — status, restarts, age, node at a glance
+![Pods](screenshots/1.png)
+
+**🖥 Nodes** — node health, version, IP
+![Nodes](screenshots/2.png)
+
+**🚀 Deployments** — ready ratio, availability
+![Deployments](screenshots/3.png)
+
+**🌐 Services** — type, cluster IP, ports
+![Services](screenshots/4.png)
+
+**⚡ Events** — sorted by time, warnings highlighted
+![Events](screenshots/5.png)
 
 ## Requirements
 
