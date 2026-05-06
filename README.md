@@ -47,6 +47,12 @@ lazyk8s
 **⚡ Events** — sorted by time, warnings highlighted
 ![Events](screenshots/5.png)
 
+**📊 Resource Usage** — Describe Pods 
+![Resource Usage](screenshots/Screenshot%20(119).png)
+
+**🔍 Context Switching** — switch context
+![Context Switching](screenshots/Screenshot%202026-05-06%20230326.png)
+
 ## Requirements
 
 | Requirement | Linux/macOS | Windows |
