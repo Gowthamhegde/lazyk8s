@@ -1,5 +1,0 @@
-Metadata-Version: 2.1
-Name: lazyk8s
-Version: 1.0.0
-Summary: A stylish terminal UI for Kubernetes
-Requires-Python: >=3.9
