@@ -1,6 +1,24 @@
 #!/usr/bin/env python3
 """LazyKube - A stylish terminal UI for Kubernetes"""
 
+import sys
+import subprocess
+
+def _ensure_deps():
+    required = {"textual": "textual>=0.50.0", "kubernetes": "kubernetes>=28.0.0"}
+    missing = []
+    for pkg, spec in required.items():
+        try:
+            __import__(pkg)
+        except ImportError:
+            missing.append(spec)
+    if missing:
+        print(f"Installing missing dependencies: {', '.join(missing)}")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", *missing])
+        print("Dependencies installed. Starting LazyKube...\n")
+
+_ensure_deps()
+
 from textual.app import App, ComposeResult
 from textual.widgets import (
     Header, Footer, DataTable, Static, Label, TabbedContent, TabPane, Log
